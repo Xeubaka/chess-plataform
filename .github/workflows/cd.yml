@@ -1,12 +1,23 @@
-# Runs only after CI passes on main. Builds real tagged images, pushes to
-# ECR, then updates Terraform's view of which image tag each service should
-# run and applies it. This is the "CI/CD pipelines ... GitHub Actions" and
-# "Terraform" requirements from the JD working together.
+# Builds real tagged images, pushes to ECR, then updates Terraform's view of
+# which image tag each service should run and applies it. This is the
+# "CI/CD pipelines ... GitHub Actions" and "Terraform" requirements from the
+# JD working together — but deploying costs real AWS money and needs
+# secrets.AWS_DEPLOY_ROLE_ARN configured (see infra/terraform/README.md),
+# neither of which is set up yet. Manual trigger only (Actions tab ->
+# "Run workflow") so it never runs — and fails on missing credentials —
+# just because something got pushed to main. Switch back to `push:` once
+# you're actually ready to deploy.
+#
+# Also worth knowing before that day: this matrix's build contexts
+# (services/room-service, frontend, etc.) assume the old monorepo layout.
+# Those services now live in their own repos (see CLAUDE.md's "Repo
+# layout") and won't exist in a checkout of this repo alone — the same
+# problem ci.yml's e2e-tests job solves by cloning each one first. This
+# workflow needs the same treatment before it'll actually work.
 name: CD
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 env:
   AWS_REGION: us-east-1

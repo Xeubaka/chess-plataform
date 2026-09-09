@@ -19,11 +19,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate nginx.conf syntax
-        run: docker run --rm -v "$PWD/gateway/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:alpine nginx -t
       - name: Build image (no push on PRs)
         working-directory: gateway
         run: docker build -t chess-platform/gateway:ci .
+      # nginx.conf's proxy_pass targets (room-service, game-service, ...)
+      # are static hostnames that only exist inside the docker-compose
+      # network — nginx resolves them at config-load time, so a plain
+      # `nginx -t` here always fails with "host not found in upstream",
+      # even on a perfectly valid config. --add-host stubs each one to
+      # 127.0.0.1 so DNS resolution succeeds and the real syntax/semantic
+      # check can run standalone, without needing the compose network up.
+      - name: Validate nginx.conf syntax
+        run: |
+          docker run --rm \
+            --add-host=room-service:127.0.0.1 \
+            --add-host=game-service:127.0.0.1 \
+            --add-host=chat-service:127.0.0.1 \
+            --add-host=analysis-service:127.0.0.1 \
+            --add-host=frontend:127.0.0.1 \
+            chess-platform/gateway:ci nginx -t
 
   e2e-tests:
     runs-on: ubuntu-latest
