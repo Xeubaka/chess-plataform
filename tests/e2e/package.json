@@ -1,0 +1,17 @@
+{
+  "name": "chess-platform-e2e",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end tests for the chess-platform golden path (Playwright) and cross-service edge cases (node:test + socket.io-client), run against a live docker compose stack.",
+  "scripts": {
+    "test:api": "node --test api/*.test.js",
+    "test:golden-path": "playwright test",
+    "test": "npm run test:api && npm run test:golden-path"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.5"
+  }
+}

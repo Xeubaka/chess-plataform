@@ -1,0 +1,12 @@
+[submodule "room-service"]
+	path = services/room-service
+	url = https://github.com/Xeubaka/room-service
+[submodule "game-service"]
+	path = services/game-service
+	url = https://github.com/Xeubaka/game-service
+[submodule "chat-service"]
+	path = services/chat-service
+	url = https://github.com/Xeubaka/chat-service
+[submodule "analysis-service"]
+	path = services/analysis-service
+	url = https://github.com/Xeubaka/analysis-service

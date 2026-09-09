@@ -1,0 +1,66 @@
+# Runs only after CI passes on main. Builds real tagged images, pushes to
+# ECR, then updates Terraform's view of which image tag each service should
+# run and applies it. This is the "CI/CD pipelines ... GitHub Actions" and
+# "Terraform" requirements from the JD working together.
+name: CD
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [gateway, frontend, room-service, game-service, chat-service, analysis-service]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }} # OIDC role, no long-lived keys stored in GitHub
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, push
+        run: |
+          dir=${{ matrix.service == 'gateway' && 'gateway' || matrix.service == 'frontend' && 'frontend' || format('services/{0}', matrix.service) }}
+          repo="${{ steps.login-ecr.outputs.registry }}/chess-platform/${{ matrix.service }}"
+          tag="${{ github.sha }}"
+          docker build -t "$repo:$tag" "$dir"
+          docker push "$repo:$tag"
+
+  terraform-apply:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: production # requires manual approval in repo settings -- a real deploy gate
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform init
+        working-directory: infra/terraform
+        run: terraform init
+
+      - name: Terraform plan
+        working-directory: infra/terraform
+        run: terraform plan -var="aws_region=${{ env.AWS_REGION }}"
+
+      - name: Terraform apply
+        working-directory: infra/terraform
+        run: terraform apply -auto-approve -var="aws_region=${{ env.AWS_REGION }}"

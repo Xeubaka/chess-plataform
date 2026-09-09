@@ -1,0 +1,8 @@
+{
+  "enabledPlugins": {
+    "code-formatter@team-tools": true,
+    "deployment-tools@team-tools": true,
+    "experimental-features@personal": false,
+    "ponytail@ponytail": true
+  }
+}

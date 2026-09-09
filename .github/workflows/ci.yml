@@ -1,0 +1,99 @@
+# This is the "shift-left" and "quality gate" language from the job
+# description, made concrete. Every OTHER service lives in its own repo
+# (see CLAUDE.md) with its own scoped CI — build/lint/unit-test checks for
+# that service alone. gateway/ is thin routing config with no independent
+# dependency lifecycle of its own, so it stays here instead of being split
+# out; its checks run as their own job below. End-to-end tests are the one
+# thing that genuinely needs every service running together, so they only
+# run here too.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  gateway-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate nginx.conf syntax
+        run: docker run --rm -v "$PWD/gateway/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:alpine nginx -t
+      - name: Build image (no push on PRs)
+        working-directory: gateway
+        run: docker build -t chess-platform/gateway:ci .
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4 # this repo: docker-compose.yml, gateway/, tests/e2e/, docs/
+
+      # docker-compose.yml's build contexts expect each service at these
+      # exact paths. gateway/ is already present from the checkout above.
+      # Everything else is its own GitHub repo now, so clone its main branch
+      # fresh before building the stack — this repo doesn't (and shouldn't)
+      # vendor their source.
+      - name: Clone frontend
+        run: git clone --depth 1 https://github.com/Xeubaka/frontend.git frontend
+
+      - name: Clone room-service
+        run: git clone --depth 1 https://github.com/Xeubaka/room-service.git services/room-service
+
+      - name: Clone game-service
+        run: git clone --depth 1 https://github.com/Xeubaka/game-service.git services/game-service
+
+      - name: Clone chat-service
+        run: git clone --depth 1 https://github.com/Xeubaka/chat-service.git services/chat-service
+
+      - name: Clone analysis-service
+        run: git clone --depth 1 https://github.com/Xeubaka/analysis-service.git services/analysis-service
+
+      - name: Start the stack
+        run: docker compose up -d --build
+
+      - name: Wait for the stack to be ready
+        run: |
+          for i in $(seq 1 30); do
+            status=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8080/api/rooms || true)
+            if [ "$status" = "201" ]; then
+              echo "stack is ready"
+              exit 0
+            fi
+            echo "waiting for stack... ($i)"
+            sleep 2
+          done
+          echo "stack never became ready"
+          docker compose logs
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tests/e2e/package-lock.json
+
+      - name: Install E2E test dependencies
+        working-directory: tests/e2e
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: tests/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run API/socket-level edge case tests
+        working-directory: tests/e2e
+        run: npm run test:api
+
+      - name: Run Playwright golden-path test
+        working-directory: tests/e2e
+        run: npm run test:golden-path
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down the stack
+        if: always()
+        run: docker compose down -v

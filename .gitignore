@@ -1,0 +1,13 @@
+node_modules/
+__pycache__/
+*.pyc
+.env
+.terraform/
+*.tfstate
+*.tfstate.backup
+.DS_Store
+graphify-out/
+docs/
+infra/
+tests/e2e/test-results/
+tests/e2e/playwright-report/
