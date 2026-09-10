@@ -79,3 +79,36 @@ test("a legal move is broadcast to every player in the room", async () => {
     watcher.close();
   }
 });
+
+test("resigning ends the game and declares the opponent the winner", async () => {
+  const roomId = `TEST-RESIGN-${Date.now()}`;
+  const { socket: white, ready: whiteReady } = connectSocket(BASE_URL, GAME_SOCKET_PATH);
+  const { socket: black, ready: blackReady } = connectSocket(BASE_URL, GAME_SOCKET_PATH);
+  try {
+    await Promise.all([whiteReady, blackReady]);
+    await new Promise((resolve) => {
+      white.once("game-state", resolve);
+      white.emit("join-room", { roomId, color: "white", name: "Resigner" });
+    });
+    await new Promise((resolve) => {
+      black.once("game-state", resolve);
+      black.emit("join-room", { roomId, color: "black", name: "Opponent" });
+    });
+
+    const blackStateUpdate = new Promise((resolve) => black.once("game-state", resolve));
+    white.emit("resign", { roomId });
+    const state = await blackStateUpdate;
+
+    assert.deepEqual(state.result, { reason: "resignation", winner: "black", resignedBy: "white" });
+
+    // The game is over: further moves from either side are rejected, not applied.
+    const rejection = await new Promise((resolve) => {
+      black.once("move-rejected", resolve);
+      black.emit("move", { roomId, from: "e7", to: "e5" });
+    });
+    assert.ok(rejection.reason && rejection.reason.length > 0);
+  } finally {
+    white.close();
+    black.close();
+  }
+});
