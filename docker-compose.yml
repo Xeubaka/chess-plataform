@@ -49,10 +49,11 @@ services:
       - redis
 
   # HTTP wrapper around bot.js's Stockfish integration — Stockfish can't run
-  # inside a Cloudflare Worker, so the GameRoom Durable Object calls this
-  # over HTTP (BOT_ORIGIN) instead of running it in-process. Unused by the
-  # plain docker-compose game-service; only relevant once game-service is
-  # migrated. See docs/CLOUDFLARE.md.
+  # inside a Cloudflare Worker, so the Worker (Durable Object or the
+  # free-tier Upstash-backed alternative — see docs/CLOUDFLARE.md) calls
+  # this over HTTP (BOT_ORIGIN) instead of running it in-process. Unused by
+  # the plain docker-compose game-service; only relevant once game-service
+  # is migrated.
   game-bot:
     build: ./services/game-service
     command: node src/botServer.js
