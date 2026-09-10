@@ -4,6 +4,15 @@ services:
     ports:
       - "6379:6379"
 
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=chess
+      - POSTGRES_PASSWORD=chess
+      - POSTGRES_DB=chess
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
   room-service:
     build: ./services/room-service
     environment:
@@ -15,8 +24,10 @@ services:
     build: ./services/game-service
     environment:
       - REDIS_URL=redis://redis:6379
+      - GAME_DB_URL=postgres://chess:chess@postgres:5432/chess
     depends_on:
       - redis
+      - postgres
 
   chat-service:
     build: ./services/chat-service
@@ -45,3 +56,6 @@ services:
       - chat-service
       - analysis-service
       - frontend
+
+volumes:
+  pgdata:

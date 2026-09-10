@@ -6,14 +6,9 @@
 # neither of which is set up yet. Manual trigger only (Actions tab ->
 # "Run workflow") so it never runs — and fails on missing credentials —
 # just because something got pushed to main. Switch back to `push:` once
-# you're actually ready to deploy.
-#
-# Also worth knowing before that day: this matrix's build contexts
-# (services/room-service, frontend, etc.) assume the old monorepo layout.
-# Those services now live in their own repos (see CLAUDE.md's "Repo
-# layout") and won't exist in a checkout of this repo alone — the same
-# problem ci.yml's e2e-tests job solves by cloning each one first. This
-# workflow needs the same treatment before it'll actually work.
+# you're actually ready to deploy (see docs/SCOPE.md Tier 3 — also gated on
+# the AWS Terraform hardening items, which are intentionally parked for now
+# in favor of free-tier hosting, per docs/FREE_TIER_HOSTING.md).
 name: CD
 
 on:
@@ -29,7 +24,17 @@ jobs:
       matrix:
         service: [gateway, frontend, room-service, game-service, chat-service, analysis-service]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4 # this repo: gateway/ only — everything else is its own repo now
+
+      # Same polyrepo problem ci.yml's e2e-tests job already solves: every
+      # service but gateway lives in its own github.com/Xeubaka/<name> repo
+      # and won't exist in a checkout of this repo alone. Clone it into the
+      # exact path the build step below expects.
+      - name: Clone service source
+        if: matrix.service != 'gateway'
+        run: |
+          dir=${{ matrix.service == 'frontend' && 'frontend' || format('services/{0}', matrix.service) }}
+          git clone --depth 1 "https://github.com/Xeubaka/${{ matrix.service }}.git" "$dir"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -64,14 +69,34 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # build-and-push tags every image as <registry>/chess-platform/<service>:<sha>
+      # deterministically, so this job can reconstruct the same URIs rather
+      # than needing matrix outputs threaded through — that's the value
+      # terraform's container_images var (infra/terraform/variables.tf) needs.
+      - name: Build container_images var
+        id: images
+        run: |
+          registry="${{ steps.login-ecr.outputs.registry }}"
+          tag="${{ github.sha }}"
+          value="{"
+          for service in gateway frontend room-service game-service chat-service analysis-service; do
+            value+="${service}=\"${registry}/chess-platform/${service}:${tag}\","
+          done
+          value+="}"
+          echo "value=$value" >> "$GITHUB_OUTPUT"
+
       - name: Terraform init
         working-directory: infra/terraform
         run: terraform init
 
       - name: Terraform plan
         working-directory: infra/terraform
-        run: terraform plan -var="aws_region=${{ env.AWS_REGION }}"
+        run: terraform plan -var="aws_region=${{ env.AWS_REGION }}" -var="container_images=${{ steps.images.outputs.value }}"
 
       - name: Terraform apply
         working-directory: infra/terraform
-        run: terraform apply -auto-approve -var="aws_region=${{ env.AWS_REGION }}"
+        run: terraform apply -auto-approve -var="aws_region=${{ env.AWS_REGION }}" -var="container_images=${{ steps.images.outputs.value }}"
