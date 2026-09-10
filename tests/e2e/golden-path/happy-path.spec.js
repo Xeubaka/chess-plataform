@@ -37,9 +37,10 @@ test("two players create/join a room, play a move, chat, and see analysis update
   await page1.locator('[data-square="e4"]').click();
 
   // game-service broadcasts game-state to the whole room, so both players'
-  // move logs should update, not just the mover's.
-  await expect(page1.locator("#moveLog li")).toHaveText(["e4"]);
-  await expect(page2.locator("#moveLog li")).toHaveText(["e4"]);
+  // move logs should update, not just the mover's. Moves render as paired
+  // "1. e4 e5"-style rows (.move-row), not one <li> per half-move.
+  await expect(page1.locator("#moveLog .move-row")).toHaveText(["1.e4"]);
+  await expect(page2.locator("#moveLog .move-row")).toHaveText(["1.e4"]);
 
   // --- Analysis round trip: game-service -> Redis -> analysis-service ->
   // Redis -> game-service -> socket "analysis-update". The static markup
@@ -71,5 +72,5 @@ test("an illegal move is rejected in the UI and does not change the board", asyn
   await page.locator('[data-square="e5"]').click();
 
   await expect(page.locator("#moveError")).toContainText("Illegal move");
-  await expect(page.locator("#moveLog li")).toHaveCount(0);
+  await expect(page.locator("#moveLog .move-row")).toHaveCount(0);
 });
