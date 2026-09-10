@@ -37,6 +37,7 @@ jobs:
             --add-host=chat-service:127.0.0.1 \
             --add-host=analysis-service:127.0.0.1 \
             --add-host=frontend:127.0.0.1 \
+            --add-host=game-bot:127.0.0.1 \
             chess-platform/gateway:ci nginx -t
 
   e2e-tests:
