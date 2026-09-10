@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Orientation for Claude Code (or any AI coding assistant) working in this repo. This is a **learn-by-doing microservices chess platform** built for interview prep — the goal is to demonstrate patterns (API gateway, pub/sub, polyglot services, IaC, CI/CD), not to ship a production product. Prefer minimal, well-explained changes over production hardening unless a `SCOPE.md` item explicitly calls for it.
+Orientation for Claude Code (or any AI coding assistant) working in this repo. This is a **learn-by-doing microservices chess platform** — a self-directed exploration of AI-assisted software development, using the build-out of a small online gaming hub (chess first) as the vehicle for demonstrating patterns (API gateway, pub/sub, polyglot services, IaC, CI/CD, and now serverless/edge via Cloudflare Workers + Durable Objects). The goal is to demonstrate patterns, not to ship a production product. Prefer minimal, well-explained changes over production hardening unless a `SCOPE.md` item explicitly calls for it.
 
 ## Repo layout — this is a polyrepo, not a monorepo
 
@@ -8,7 +8,7 @@ Most services are their own git repo, already pushed to GitHub. `gateway/` is th
 
 | Path | Repo | Remote |
 |---|---|---|
-| `.` (this repo, includes `gateway/`) | main/orchestration repo | git-init'd, **no commits or remote yet** |
+| `.` (this repo, includes `gateway/`) | main/orchestration repo | `github.com/Xeubaka/chess-plataform` |
 | `frontend/` | own repo | `github.com/Xeubaka/frontend` |
 | `services/room-service/` | own repo | `github.com/Xeubaka/room-service` |
 | `services/game-service/` | own repo | `github.com/Xeubaka/game-service` |
@@ -28,10 +28,11 @@ Then open http://localhost:8080. This works regardless of the repo split above �
 
 ## Status facts (don't assume otherwise)
 
-- **This repo has no commits or remote yet.** `git init` has been run, nothing committed or pushed. Ask before committing or pushing anywhere. **Before the first commit, fix `.gitignore`** — it currently excludes `docs/` and `infra/` entirely, which would silently drop all project documentation and the Terraform code (see `docs/SCOPE.md` Tier 0).
-- **End-to-end tests exist and gate this repo's CI; per-service unit tests still don't.** `tests/e2e/` covers the golden path and cross-service edge cases (see "Testing & shift-left" below). `room-service`'s `npm test` still points at `src/*.test.js`, which don't exist. `game-service` and `chat-service` have no `test` script at all. `analysis-service` has no test tooling. Each service's own `ci.yml` only runs `node --check` / `python -m py_compile` (syntax/compile checks) — not real unit tests. This is `docs/SCOPE.md` Tier 2.
+- **This repo has commits and a remote.** 7 commits on `main` as of this writing (`be60812` initial commit … `b095db7` update frontend ref), remote `origin` set to `https://github.com/Xeubaka/chess-plataform.git`. Still ask before committing or pushing — that's just good practice, not a reflection of the repo being empty.
+- **`.gitignore` still excludes `docs/` and `infra/` entirely — unfixed, and now a live problem, not a "before the first commit" TODO.** Commits have happened without this being fixed, which means `docs/` and `infra/` (all project documentation and the Terraform code) have never actually been tracked or pushed, despite existing on disk. Anything written into either directory — including doc updates from an AI assistant session — silently can't reach `origin` until this is fixed. Flag this to the user rather than fixing it unprompted; it's a real decision about what should be tracked, not just a doc typo.
+- **End-to-end tests exist and gate this repo's CI; per-service unit tests still don't** for most services. `tests/e2e/` covers the golden path and cross-service edge cases (see "Testing & shift-left" below). `room-service`'s `npm test` still points at `src/*.test.js`, which don't exist. `chat-service` has no `test` script at all. `analysis-service` has no test tooling. `game-service` is the exception — `src/gameLogic.test.js` runs real `node --test` unit tests against its pure move-application logic. Every service's own `ci.yml` otherwise only runs `node --check` / `python -m py_compile` (syntax/compile checks). This is `docs/SCOPE.md` Tier 2.
 - **Every service's `dependency-scan` job is a placeholder** (`echo "Wire in Snyk, Trivy, or 'npm audit --audit-level=high' here"`), not a real scan.
-- **`cd.yml` is manual-trigger only (`workflow_dispatch`)** — it used to auto-run on every push to `main` and fail immediately on missing `secrets.AWS_DEPLOY_ROLE_ARN`, before deploy was anywhere near ready. It's also still broken for the polyrepo split (its `build-and-push` matrix assumes services live under `services/` in this repo, which is no longer true) and doesn't pass `-var="container_images=..."` to `terraform apply`. See `docs/SCOPE.md` Tier 3 — don't switch its trigger back to `push` until both are fixed.
+- **`cd.yml` is manual-trigger only (`workflow_dispatch`)** — it used to auto-run on every push to `main` and fail immediately on missing `secrets.AWS_DEPLOY_ROLE_ARN`, before deploy was anywhere near ready. Its polyrepo-split brokenness (the `build-and-push` matrix not knowing services live in their own repos, and not passing `-var="container_images=..."` to `terraform apply`) is now **fixed** — see `docs/SCOPE.md` Tier 3, done 2026-09-10. It's still `workflow_dispatch`-only by design: the AWS Terraform-hardening items below remain intentionally parked in favor of the zero-cost path in `docs/FREE_TIER_HOSTING.md`.
 
 ## Services
 
@@ -62,12 +63,22 @@ If you touch either end of one of these contracts (channel name, payload shape),
 ## Known gaps (named, not secret)
 
 These are real, already-identified gaps — tracked as backlog items in `docs/SCOPE.md`, not things to silently "fix" in passing:
-- `game-service`'s `disconnect` handler is an explicit no-op (comment: "Left as an exercise: mark player disconnected, allow reconnect with same room+color")
 - Move promotion is hardcoded to queen (`promotion: "q"`) — no underpromotion UI
 - No concurrency guard on simultaneous same-square clicks in the frontend
 - `/api/analysis/` nginx route appears unused — the frontend gets analysis via the `analysis-update` socket event relayed through game-service, not this REST route
-- Deliberate simplifications called out in `docs/PROJECT_PLAN.md`: no auth, no persistent database (Redis isn't durable storage), win-probability is a material-count heuristic (not a real chess engine), single non-HA Redis instance
+- Deliberate simplifications called out in `docs/PROJECT_PLAN.md`: no auth, win-probability is a material-count heuristic (not a real chess engine), single non-HA Redis instance
 - Deliberate gaps called out in `infra/terraform/README.md`: no HTTPS/ACM, no autoscaling policies, no remote state backend (local state only — don't run this with a teammate as-is), no secrets manager, single-AZ Redis
+
+**No longer gaps, despite older notes to the contrary:**
+- `game-service`'s `disconnect` handler is implemented, not a no-op — it marks the player disconnected and broadcasts `player-disconnected`; a later `join-room` with the same room/color/name is treated as a reconnect (`player-reconnected`).
+- `game-service` has a Stockfish-backed bot opponent (Easy/Medium/Hard difficulty) and a resign flow — see `docs/SCOPE.md` Tier 3's "Play vs. Bot" entry.
+- "No persistent database" is now only true for `room-service`/`chat-service`/`analysis-service`. `game-service` write-throughs every move/resign to Postgres (`src/db.js`, `docker-compose.yml`'s `postgres` service, `GAME_DB_URL`) and rehydrates on a cache miss — falls back to memory-only if `GAME_DB_URL` is unset. Redis itself is still not durable storage. Note: if the Cloudflare Durable Objects migration below is ever cut over, this Postgres path gets replaced by the Durable Object's own built-in storage, not kept alongside it.
+
+## Cloudflare Workers + Durable Objects migration (in progress)
+
+`game-service` is partway through a migration from Express/Socket.IO to a Cloudflare Worker with one `GameRoom` Durable Object per room — the pitch being that a DO instance genuinely is an isolated, serverless per-game process, with no server or Kubernetes cluster to run one container per match on. Full setup guide: `docs/CLOUDFLARE.md`. Full status/design notes: `docs/SCOPE.md` Tier 3.
+
+**Current state: Phase 1 only — built, not cut over.** `services/game-service/src/{gameRoom.js,worker.js,botServer.js}` and `wrangler.toml` exist alongside the original `src/index.js`/`src/db.js`, which are still what's actually serving traffic. `analysis-service` gained an additive HTTP path (`POST /internal/moves` + a callback to the Worker) alongside its unchanged Redis pub/sub listener. `docker-compose.yml` has a new `game-bot` service (HTTP wrapper around Stockfish, since Stockfish can't run inside a Workers isolate) and `gateway/nginx.conf` has a new `/internal/bot/` location — both additive, neither wired into the live request path yet. The actual cutover (repointing nginx's `/socket/game/` at a deployed Worker, switching `frontend/js/game.js` off `socket.io-client` to native WebSocket, deleting `index.js`/`db.js`) is intentionally deferred until the Worker is deployed to a real Cloudflare account and manually verified — don't do it opportunistically. Durable Objects require Cloudflare's Workers **Paid** plan ($5/mo) — there is no free-tier DO.
 
 `chess.js` in `game.html` used to be double-loaded (a broken CDN `<script>` global *and* the server npm dependency) and the CDN reference 404'd outright — both fixed; see "Testing & shift-left" below for how that was found.
 
@@ -98,3 +109,4 @@ Read in this order (per `README.md`):
 5. `docs/SCOPE.md` — backlog of future functionality, formatted for an automated loop to consume one item at a time
 6. `docs/LOOP_GUIDE.md` — how to actually run that loop (local session or cloud-scheduled)
 7. `tests/e2e/README.md` — the end-to-end test suite that gates CI
+8. `docs/CLOUDFLARE.md` — if/when `game-service` runs on Cloudflare Workers + Durable Objects instead of docker-compose (see "Cloudflare Workers + Durable Objects migration" above)
