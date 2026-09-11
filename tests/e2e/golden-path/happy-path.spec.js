@@ -114,3 +114,67 @@ test("clicking another of the player's own pieces re-selects it, chess.com-style
   await expect(page.locator("#moveError")).toHaveText("");
   await expect(page.locator("#moveLog .move-row")).toHaveCount(0);
 });
+
+test("highlighting the king in check is off by default, opt-in, and persists across a reload (frontend#7)", async ({ browser }) => {
+  const player1 = await browser.newContext();
+  const player2 = await browser.newContext();
+  const page1 = await player1.newPage();
+  const page2 = await player2.newPage();
+
+  await page1.goto("/");
+  await page1.locator("#createName").fill("Alice");
+  await page1.locator("#createBtn").click();
+  await page1.waitForURL(/game\.html\?room=/);
+  const roomId = new URL(page1.url()).searchParams.get("room");
+
+  await page2.goto("/");
+  await page2.locator("#joinCode").fill(roomId);
+  await page2.locator("#joinName").fill("Bob");
+  await page2.locator("#joinBtn").click();
+  await page2.waitForURL(/game\.html\?room=/);
+
+  // Room-service's coin flip decides who's actually white/black.
+  const page1IsWhite = (await page1.evaluate(() => sessionStorage.getItem("playerColor"))) === "white";
+  const [white, black] = page1IsWhite ? [page1, page2] : [page2, page1];
+
+  async function move(page, from, to) {
+    await page.locator(`[data-square="${from}"]`).click();
+    await page.locator(`[data-square="${to}"]`).click();
+  }
+
+  // 1.e4 e5 2.Qh5 Nc6 3.Qxe5+ — delivers check along the open e-file,
+  // king still on e8. Deliberately bad chess, just needs to be legal.
+  // Moves render as paired rows (moveLog.textContent), so waiting on the
+  // exact SAN text landing is the reliable way to sequence turns here —
+  // row *count* alone is ambiguous (it only bumps on White's half).
+  const sanLanded = (page, san) =>
+    page.waitForFunction((text) => document.getElementById("moveLog").textContent.includes(text), san);
+
+  await white.locator("#status").waitFor();
+  await move(white, "e2", "e4");
+  await sanLanded(black, "e4");
+  await move(black, "e7", "e5");
+  await sanLanded(white, "e5");
+  await move(white, "d1", "h5");
+  await sanLanded(black, "Qh5");
+  await move(black, "b8", "c6");
+  await sanLanded(white, "Nc6");
+  await move(white, "h5", "e5");
+
+  await expect(black.locator("#status")).toHaveText(/check!/);
+
+  // Off by default: no highlight yet even though the king is in check.
+  await expect(black.locator("#highlightCheckToggle")).not.toBeChecked();
+  await expect(black.locator(".in-check")).toHaveCount(0);
+
+  // Opting in highlights the actual side-to-move's king (e8), not just any square.
+  await black.locator("#highlightCheckToggle").check();
+  await expect(black.locator('[data-square="e8"]')).toHaveClass(/in-check/);
+  await expect(black.locator(".in-check")).toHaveCount(1);
+
+  // The setting is a client-side preference (localStorage), not tied to
+  // this one check event — it survives a reload.
+  await black.reload();
+  await expect(black.locator("#highlightCheckToggle")).toBeChecked();
+  await expect(black.locator('[data-square="e8"]')).toHaveClass(/in-check/);
+});
