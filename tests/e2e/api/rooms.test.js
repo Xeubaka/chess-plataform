@@ -31,15 +31,17 @@ test("POST /api/rooms/:id/join 404s for an unknown room code", async () => {
   assert.equal(res.status, 404);
 });
 
-test("first two joiners get white/black, a third becomes a spectator", async () => {
+test("first two joiners get complementary white/black colors (per the room's own coin flip), a third becomes a spectator", async () => {
   const room = await createRoom();
 
   const p1 = await (await joinRoom(room.id, "Alice")).json();
   const p2 = await (await joinRoom(room.id, "Bob")).json();
   const p3 = await (await joinRoom(room.id, "Carol")).json();
 
-  assert.equal(p1.you.color, "white");
-  assert.equal(p2.you.color, "black");
+  // Which of the first two joiners gets white is now a per-room coin flip
+  // (room-service#1) rather than always "whoever joined first" — assert the
+  // pair is complementary, not a fixed assignment.
+  assert.deepEqual([p1.you.color, p2.you.color].sort(), ["black", "white"]);
   assert.equal(p3.you.color, "spectator");
 
   // Room flips to "ready" the moment both white and black seats are filled,

@@ -32,15 +32,25 @@ test("two players create/join a room, play a move, chat, and see analysis update
   await expect(page1.locator("#status")).toHaveText(/to move/);
   await expect(page2.locator("#status")).toHaveText(/to move/);
 
-  // --- Player 1 (white, first joiner) makes the opening move ---
-  await page1.locator('[data-square="e2"]').click();
-  await page1.locator('[data-square="e4"]').click();
+  // Per-player chess clock: starts once both seats are filled, rendered as
+  // "M:SS" on both sides' player bars.
+  await expect(page1.locator("#selfClock")).toHaveText(/^\d:\d{2}$/);
+  await expect(page1.locator("#opponentClock")).toHaveText(/^\d:\d{2}$/);
+
+  // --- Whichever side got white (room-service#1: a per-room coin flip now
+  // decides this, not "whoever joined first") makes the opening move ---
+  const player1Color = await page1.evaluate(() => sessionStorage.getItem("playerColor"));
+  const whitePage = player1Color === "white" ? page1 : page2;
+  const blackPage = player1Color === "white" ? page2 : page1;
+
+  await whitePage.locator('[data-square="e2"]').click();
+  await whitePage.locator('[data-square="e4"]').click();
 
   // game-service broadcasts game-state to the whole room, so both players'
   // move logs should update, not just the mover's. Moves render as paired
   // "1. e4 e5"-style rows (.move-row), not one <li> per half-move.
-  await expect(page1.locator("#moveLog .move-row")).toHaveText(["1.e4"]);
-  await expect(page2.locator("#moveLog .move-row")).toHaveText(["1.e4"]);
+  await expect(whitePage.locator("#moveLog .move-row")).toHaveText(["1.e4"]);
+  await expect(blackPage.locator("#moveLog .move-row")).toHaveText(["1.e4"]);
 
   // --- Analysis round trip: game-service -> Redis -> analysis-service ->
   // Redis -> game-service -> socket "analysis-update". The static markup
@@ -67,9 +77,13 @@ test("an illegal move is rejected in the UI and does not change the board", asyn
   await page.waitForURL(/game\.html\?room=/);
   await expect(page.locator("#status")).toHaveText(/to move/);
 
-  // e2 -> e5 is a three-square pawn push: illegal from the opening position.
-  await page.locator('[data-square="e2"]').click();
-  await page.locator('[data-square="e5"]').click();
+  // Solo creator's color is now a per-room coin flip too (room-service#1),
+  // not always white — a 3-square pawn push is illegal for either side, but
+  // starting square/direction have to match whichever color this is.
+  const soloColor = await page.evaluate(() => sessionStorage.getItem("playerColor"));
+  const [from, to] = soloColor === "white" ? ["e2", "e5"] : ["e7", "e4"];
+  await page.locator(`[data-square="${from}"]`).click();
+  await page.locator(`[data-square="${to}"]`).click();
 
   await expect(page.locator("#moveError")).toContainText("Illegal move");
   await expect(page.locator("#moveLog .move-row")).toHaveCount(0);
