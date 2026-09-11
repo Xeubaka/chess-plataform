@@ -70,7 +70,7 @@ test("two players create/join a room, play a move, chat, and see analysis update
   await player2.close();
 });
 
-test("an illegal move is rejected in the UI and does not change the board", async ({ page }) => {
+test("clicking an out-of-range square deselects instead of attempting an illegal move (frontend#6)", async ({ page }) => {
   await page.goto("/");
   await page.locator("#createName").fill("Solo");
   await page.locator("#createBtn").click();
@@ -78,13 +78,39 @@ test("an illegal move is rejected in the UI and does not change the board", asyn
   await expect(page.locator("#status")).toHaveText(/to move/);
 
   // Solo creator's color is now a per-room coin flip too (room-service#1),
-  // not always white — a 3-square pawn push is illegal for either side, but
-  // starting square/direction have to match whichever color this is.
+  // not always white — a 3-square pawn push is out of range for either
+  // side, but starting square/direction have to match whichever color this is.
   const soloColor = await page.evaluate(() => sessionStorage.getItem("playerColor"));
   const [from, to] = soloColor === "white" ? ["e2", "e5"] : ["e7", "e4"];
   await page.locator(`[data-square="${from}"]`).click();
+  await expect(page.locator(`[data-square="${from}"]`)).toHaveClass(/selected/);
+
+  // Not a legal destination and not another of the player's own pieces —
+  // onSquareClick clears the selection client-side rather than emitting a
+  // move the server would only have to reject (server-side rejection itself
+  // is covered by tests/e2e/api/game-socket.test.js).
   await page.locator(`[data-square="${to}"]`).click();
 
-  await expect(page.locator("#moveError")).toContainText("Illegal move");
+  await expect(page.locator(".selected")).toHaveCount(0);
+  await expect(page.locator("#moveError")).toHaveText("");
+  await expect(page.locator("#moveLog .move-row")).toHaveCount(0);
+});
+
+test("clicking another of the player's own pieces re-selects it, chess.com-style (frontend#6)", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("#createName").fill("Solo");
+  await page.locator("#createBtn").click();
+  await page.waitForURL(/game\.html\?room=/);
+  await expect(page.locator("#status")).toHaveText(/to move/);
+
+  const soloColor = await page.evaluate(() => sessionStorage.getItem("playerColor"));
+  // Two of this side's own pawns, neither a legal destination of the other.
+  const [first, second] = soloColor === "white" ? ["e2", "d2"] : ["e7", "d7"];
+  await page.locator(`[data-square="${first}"]`).click();
+  await page.locator(`[data-square="${second}"]`).click();
+
+  await expect(page.locator(`[data-square="${second}"]`)).toHaveClass(/selected/);
+  await expect(page.locator(`[data-square="${first}"]`)).not.toHaveClass(/selected/);
+  await expect(page.locator("#moveError")).toHaveText("");
   await expect(page.locator("#moveLog .move-row")).toHaveCount(0);
 });
