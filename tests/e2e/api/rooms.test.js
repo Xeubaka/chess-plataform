@@ -4,8 +4,12 @@ import assert from "node:assert/strict";
 // Hits the gateway exactly like a client would — never a service directly.
 const BASE_URL = process.env.BASE_URL || "http://localhost:8080";
 
-async function createRoom() {
-  const res = await fetch(`${BASE_URL}/api/rooms`, { method: "POST" });
+async function createRoom(timeControlMinutes) {
+  const res = await fetch(`${BASE_URL}/api/rooms`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(timeControlMinutes === undefined ? {} : { timeControlMinutes })
+  });
   assert.equal(res.status, 201);
   return res.json();
 }
@@ -48,4 +52,19 @@ test("first two joiners get complementary white/black colors (per the room's own
   // regardless of how many spectators join afterward.
   assert.equal(p2.room.status, "ready");
   assert.equal(p3.room.status, "ready");
+});
+
+test("room-configurable time control defaults to 3 minutes and honors/clamps a host-chosen value (room-service#2)", async () => {
+  const defaultRoom = await createRoom();
+  assert.equal(defaultRoom.timeControlMs, 3 * 60 * 1000);
+
+  const customRoom = await createRoom(10);
+  assert.equal(customRoom.timeControlMs, 10 * 60 * 1000);
+
+  const clampedRoom = await createRoom(999);
+  assert.equal(clampedRoom.timeControlMs, 60 * 60 * 1000);
+
+  // A joiner reads the same time control back off the room object as the creator.
+  const joined = await (await joinRoom(customRoom.id, "Dana")).json();
+  assert.equal(joined.room.timeControlMs, 10 * 60 * 1000);
 });

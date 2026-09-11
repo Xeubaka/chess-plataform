@@ -80,6 +80,31 @@ test("a legal move is broadcast to every player in the room", async () => {
   }
 });
 
+test("a room-configurable time control (room-service#2) reaches game-service's clock once both seats are filled", async () => {
+  const roomId = `TEST-TIMECONTROL-${Date.now()}`;
+  const { socket: white, ready: whiteReady } = connectSocket(BASE_URL, GAME_SOCKET_PATH);
+  const { socket: black, ready: blackReady } = connectSocket(BASE_URL, GAME_SOCKET_PATH);
+  try {
+    await Promise.all([whiteReady, blackReady]);
+    await new Promise((resolve) => {
+      white.once("game-state", resolve);
+      white.emit("join-room", { roomId, color: "white", name: "Host", timeControlMs: 10 * 60 * 1000 });
+    });
+
+    // The clock only starts (and clocks stop being null) once both seats are
+    // filled — this join's game-state is the one carrying it.
+    const state = await new Promise((resolve) => {
+      black.once("game-state", resolve);
+      black.emit("join-room", { roomId, color: "black", name: "Opponent" });
+    });
+
+    assert.deepEqual(state.clocks, { white: 10 * 60 * 1000, black: 10 * 60 * 1000 });
+  } finally {
+    white.close();
+    black.close();
+  }
+});
+
 test("resigning ends the game and declares the opponent the winner", async () => {
   const roomId = `TEST-RESIGN-${Date.now()}`;
   const { socket: white, ready: whiteReady } = connectSocket(BASE_URL, GAME_SOCKET_PATH);
