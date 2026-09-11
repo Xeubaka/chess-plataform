@@ -105,6 +105,103 @@ test("a room-configurable time control (room-service#2) reaches game-service's c
   }
 });
 
+async function createRoomViaRoomService() {
+  const res = await fetch(`${BASE_URL}/api/rooms`, { method: "POST" });
+  const room = await res.json();
+  return room.id;
+}
+
+test("rematch: proposer waits, opponent accepts, and the game resets (game-service#3/room-service#3/frontend#2)", async () => {
+  const roomId = await createRoomViaRoomService();
+  const { socket: white, ready: whiteReady } = connectSocket(BASE_URL, GAME_SOCKET_PATH);
+  const { socket: black, ready: blackReady } = connectSocket(BASE_URL, GAME_SOCKET_PATH);
+  try {
+    await Promise.all([whiteReady, blackReady]);
+    await new Promise((resolve) => {
+      white.once("game-state", resolve);
+      white.emit("join-room", { roomId, color: "white", name: "Resigner" });
+    });
+    await new Promise((resolve) => {
+      black.once("game-state", resolve);
+      black.emit("join-room", { roomId, color: "black", name: "Opponent" });
+    });
+
+    const blackSeesResignation = new Promise((resolve) => black.once("game-state", resolve));
+    white.emit("resign", { roomId });
+    await blackSeesResignation;
+
+    // The loser proposes a rematch; the winner sees the offer and accepts.
+    const blackSeesOffer = new Promise((resolve) => black.once("rematch-offered", resolve));
+    white.emit("rematch-request", { roomId });
+    const offer = await blackSeesOffer;
+    assert.equal(offer.requestedBy, "white");
+    assert.ok(offer.expiresAt > Date.now());
+
+    const whiteSeesReset = new Promise((resolve) => white.once("game-state", resolve));
+    black.emit("rematch-response", { roomId, accept: true });
+    const resetState = await whiteSeesReset;
+
+    assert.equal(resetState.fen, "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    assert.deepEqual(resetState.moves, []);
+    assert.equal(resetState.result, null);
+    assert.equal(resetState.rematch, null);
+
+    // Room-service never learns about this room being finalized — the game
+    // just continues in the same room, so joining it (as a fresh spectator)
+    // must still work.
+    const stillJoinable = await fetch(`${BASE_URL}/api/rooms/${roomId}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ playerName: "LateSpectator" })
+    });
+    assert.equal(stillJoinable.status, 200);
+  } finally {
+    white.close();
+    black.close();
+  }
+});
+
+test("rematch: opponent declining finalizes the room in room-service (410 on further joins)", async () => {
+  const roomId = await createRoomViaRoomService();
+  const { socket: white, ready: whiteReady } = connectSocket(BASE_URL, GAME_SOCKET_PATH);
+  const { socket: black, ready: blackReady } = connectSocket(BASE_URL, GAME_SOCKET_PATH);
+  try {
+    await Promise.all([whiteReady, blackReady]);
+    await new Promise((resolve) => {
+      white.once("game-state", resolve);
+      white.emit("join-room", { roomId, color: "white", name: "Resigner" });
+    });
+    await new Promise((resolve) => {
+      black.once("game-state", resolve);
+      black.emit("join-room", { roomId, color: "black", name: "Opponent" });
+    });
+
+    await new Promise((resolve) => {
+      black.once("game-state", resolve);
+      white.emit("resign", { roomId });
+    });
+
+    const whiteSeesClosed = new Promise((resolve) => white.once("rematch-closed", resolve));
+    black.emit("rematch-request", { roomId });
+    await new Promise((resolve) => white.once("rematch-offered", resolve));
+    white.emit("rematch-response", { roomId, accept: false });
+    const closed = await whiteSeesClosed;
+    assert.equal(closed.reason, "declined");
+
+    // game-service's fire-and-forget close call needs a beat to land.
+    await new Promise((r) => setTimeout(r, 300));
+    const rejoin = await fetch(`${BASE_URL}/api/rooms/${roomId}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ playerName: "TooLate" })
+    });
+    assert.equal(rejoin.status, 410);
+  } finally {
+    white.close();
+    black.close();
+  }
+});
+
 test("resigning ends the game and declares the opponent the winner", async () => {
   const roomId = `TEST-RESIGN-${Date.now()}`;
   const { socket: white, ready: whiteReady } = connectSocket(BASE_URL, GAME_SOCKET_PATH);

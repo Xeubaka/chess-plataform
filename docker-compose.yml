@@ -25,9 +25,13 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       - GAME_DB_URL=postgres://chess:chess@postgres:5432/chess
+      # Used to finalize (close) a room after a declined/expired rematch
+      # offer — see gameLogic.js's rematch flow.
+      - ROOM_SERVICE_URL=http://room-service:3001
     depends_on:
       - redis
       - postgres
+      - room-service
 
   chat-service:
     build: ./services/chat-service
