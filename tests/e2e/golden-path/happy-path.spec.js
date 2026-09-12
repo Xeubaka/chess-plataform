@@ -178,3 +178,56 @@ test("highlighting the king in check is off by default, opt-in, and persists acr
   await expect(black.locator("#highlightCheckToggle")).toBeChecked();
   await expect(black.locator('[data-square="e8"]')).toHaveClass(/in-check/);
 });
+
+test("end-of-game modal pops up on resignation, hides the resign button, and its Rematch button proposes a real rematch (frontend#8)", async ({ browser }) => {
+  const player1 = await browser.newContext();
+  const player2 = await browser.newContext();
+  const page1 = await player1.newPage();
+  const page2 = await player2.newPage();
+
+  await page1.goto("/");
+  await page1.locator("#createName").fill("Alice");
+  await page1.locator("#createBtn").click();
+  await page1.waitForURL(/game\.html\?room=/);
+  const roomId = new URL(page1.url()).searchParams.get("room");
+
+  await page2.goto("/");
+  await page2.locator("#joinCode").fill(roomId);
+  await page2.locator("#joinName").fill("Bob");
+  await page2.locator("#joinBtn").click();
+  await page2.waitForURL(/game\.html\?room=/);
+
+  page1.once("dialog", (d) => d.accept());
+  await page1.locator("#resignBtn").click();
+
+  // Resigner's own view: modal shows the outcome, resign button actually
+  // hides (regression check — .hidden vs. .resign-btn CSS specificity used
+  // to lose this race and leave it visibly stuck).
+  await expect(page1.locator("#endGameModal")).toBeVisible();
+  await expect(page1.locator("#endGameText")).toHaveText(/resigned/);
+  await expect(page1.locator("#resignBtn")).toBeHidden();
+
+  // Opponent's view: same modal, and clicking Rematch there triggers the
+  // real rematch-request flow (#rematchOffer), not a separate code path.
+  await expect(page2.locator("#endGameModal")).toBeVisible();
+  await page2.locator("#endGameRematchBtn").click();
+  await expect(page2.locator("#endGameModal")).toBeHidden();
+  await expect(page1.locator("#rematchOffer")).toBeVisible();
+});
+
+test("end-of-game modal's Rematch button replays a bot game immediately (frontend#8)", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("#botName").fill("Solo");
+  await page.locator("#playBotBtn").click();
+  await page.waitForURL(/game\.html\?room=bot-/);
+  const firstRoomId = new URL(page.url()).searchParams.get("room");
+
+  page.once("dialog", (d) => d.accept());
+  await page.locator("#resignBtn").click();
+  await expect(page.locator("#endGameModal")).toBeVisible();
+
+  await page.locator("#endGameRematchBtn").click();
+  await page.waitForURL(/game\.html\?room=bot-/);
+  expect(new URL(page.url()).searchParams.get("room")).not.toBe(firstRoomId);
+  await expect(page.locator("#endGameModal")).toBeHidden();
+});
