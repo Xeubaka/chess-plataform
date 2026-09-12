@@ -48,9 +48,13 @@ test("two players create/join a room, play a move, chat, and see analysis update
 
   // game-service broadcasts game-state to the whole room, so both players'
   // move logs should update, not just the mover's. Moves render as paired
-  // "1. e4 e5"-style rows (.move-row), not one <li> per half-move.
-  await expect(whitePage.locator("#moveLog .move-row")).toHaveText(["1.e4"]);
-  await expect(blackPage.locator("#moveLog .move-row")).toHaveText(["1.e4"]);
+  // "1. e4 e5"-style rows (.move-row), not one <li> per half-move. The
+  // trailing " 0" is e4's win-probability swing badge (frontend#9) — always
+  // 0 for a quiet opening move once analysis-service's pub/sub round trip
+  // lands, which asserting the settled value (rather than the pre-badge
+  // text) avoids racing against.
+  await expect(whitePage.locator("#moveLog .move-row")).toHaveText(["1.e4 0"]);
+  await expect(blackPage.locator("#moveLog .move-row")).toHaveText(["1.e4 0"]);
 
   // --- Analysis round trip: game-service -> Redis -> analysis-service ->
   // Redis -> game-service -> socket "analysis-update". The static markup
@@ -230,4 +234,71 @@ test("end-of-game modal's Rematch button replays a bot game immediately (fronten
   await page.waitForURL(/game\.html\?room=bot-/);
   expect(new URL(page.url()).searchParams.get("room")).not.toBe(firstRoomId);
   await expect(page.locator("#endGameModal")).toBeHidden();
+});
+
+test("move log annotates each move with its win-probability swing (frontend#9)", async ({ browser }) => {
+  const player1 = await browser.newContext();
+  const player2 = await browser.newContext();
+  const page1 = await player1.newPage();
+  const page2 = await player2.newPage();
+
+  await page1.goto("/");
+  await page1.locator("#createName").fill("Alice");
+  await page1.locator("#createBtn").click();
+  await page1.waitForURL(/game\.html\?room=/);
+  const roomId = new URL(page1.url()).searchParams.get("room");
+
+  await page2.goto("/");
+  await page2.locator("#joinCode").fill(roomId);
+  await page2.locator("#joinName").fill("Bob");
+  await page2.locator("#joinBtn").click();
+  await page2.waitForURL(/game\.html\?room=/);
+
+  const page1IsWhite = (await page1.evaluate(() => sessionStorage.getItem("playerColor"))) === "white";
+  const [white, black] = page1IsWhite ? [page1, page2] : [page2, page1];
+
+  async function move(page, from, to) {
+    await page.locator(`[data-square="${from}"]`).click();
+    await page.locator(`[data-square="${to}"]`).click();
+  }
+  const sanLanded = (page, san) =>
+    page.waitForFunction((text) => document.getElementById("moveLog").textContent.includes(text), san);
+
+  // 1.e4 e5 2.Qh5 Nc6 3.Qxe5+ Nxe5 — White hangs the queen on the last move,
+  // a large, deterministic material swing toward Black to annotate.
+  await white.locator("#status").waitFor();
+  await move(white, "e2", "e4");
+  await sanLanded(black, "e4");
+  await move(black, "e7", "e5");
+  await sanLanded(white, "e5");
+  await move(white, "d1", "h5");
+  await sanLanded(black, "Qh5");
+  await move(black, "b8", "c6");
+  await sanLanded(white, "Nc6");
+  await move(white, "h5", "e5");
+  await sanLanded(black, "Qxe5");
+  await move(black, "c6", "e5");
+  await sanLanded(white, "Nxe5");
+
+  // A swing badge only renders once its move's analysis-update actually
+  // lands (appendSwingBadge skips cells with no recorded delta yet) — wait
+  // for both of the final row's badges, not just the row's SAN text.
+  await white.waitForFunction(() => {
+    const rows = document.querySelectorAll("#moveLog .move-row");
+    const last = rows[rows.length - 1];
+    return last && last.querySelectorAll(".move-swing").length === 2;
+  });
+
+  const lastRow = white.locator("#moveLog .move-row").last();
+  await expect(lastRow).toContainText("Qxe5+");
+  await expect(lastRow).toContainText("Nxe5");
+  // White's move gained material (capturing a pawn with check) -> positive,
+  // colored toward white; Black's reply (winning the queen) swings hugely
+  // negative, colored toward black.
+  const swings = await lastRow.locator(".move-swing").allTextContents();
+  const [whiteSwing, blackSwing] = swings.map((s) => parseInt(s, 10));
+  expect(whiteSwing).toBeGreaterThan(0);
+  expect(blackSwing).toBeLessThan(-20); // hanging a queen is a big swing
+  await expect(lastRow.locator(".move-swing").first()).toHaveClass(/swing-white/);
+  await expect(lastRow.locator(".move-swing").last()).toHaveClass(/swing-black/);
 });
